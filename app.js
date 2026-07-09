@@ -1,3 +1,10 @@
+// ============================================================
+// FILL THESE IN with your own Supabase project's values
+// (Supabase dashboard -> Project Settings -> API)
+// ============================================================
+const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+
 const CAT_COLORS = {
   "LTM": "#a389f4",
   "Ranked": "#e8b94f",
@@ -14,12 +21,9 @@ const TREND_ICON = {
   "N/A": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M8 12H16"/></svg>'
 };
 
-// Tempering scale colors (low value -> high value), matches CSS gradient stops
 const TEMPER_STOPS = ["#4a5a78","#5573c9","#7d5fd9","#a34fd0","#d94f9e","#e8636b","#e88a4f","#efab4a","#f4cf5c"];
 const MAX_EDIT_VALUE = 10000000;
-const API_URL = "/api/swords";
 
-// ---- shared sword data (persisted server-side, visible to every visitor) ----
 let ALL_SWORDS = [];
 let minV = 0;
 let maxV = 0;
@@ -30,24 +34,31 @@ function computeMinMax(){
   maxV = values.length ? Math.max(...values) : 0;
 }
 
+// ---- Supabase client ----
+// Rebuilt whenever the editor password changes, so writes carry the
+// x-editor-password header that Supabase's row-level security checks.
+let sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function rebuildClient(password){
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: password ? { "x-editor-password": password } : {} }
+  });
+}
+
 async function fetchSwords(){
-  const res = await fetch(API_URL);
-  if(!res.ok) throw new Error("Failed to load swords");
-  ALL_SWORDS = await res.json();
+  const { data, error } = await sb.from('swords').select('*').order('v', { ascending: false });
+  if(error) throw error;
+  ALL_SWORDS = data;
   computeMinMax();
 }
 
 // ---- editor access gate ----
-const EDITOR_PASSWORD = "Bigkunfupandadihh";
 const UNLOCK_KEY = "bbts_editor_unlocked";
 const SESSION_PW_KEY = "bbts_editor_pw";
 let isUnlocked = sessionStorage.getItem(UNLOCK_KEY) === "true";
 let editorPassword = sessionStorage.getItem(SESSION_PW_KEY) || null;
+if(isUnlocked && editorPassword) rebuildClient(editorPassword);
 if(isUnlocked && !editorPassword) isUnlocked = false;
-
-function authHeaders(){
-  return { "Content-Type": "application/json", "x-editor-password": editorPassword || "" };
-}
 
 function setUnlocked(state){
   isUnlocked = state;
@@ -55,6 +66,7 @@ function setUnlocked(state){
   if(!state){
     editorPassword = null;
     sessionStorage.removeItem(SESSION_PW_KEY);
+    rebuildClient(null);
   }
   document.getElementById('editToolbar').style.display = state ? "flex" : "none";
   const lockIcon = document.getElementById('lockIcon');
@@ -72,14 +84,14 @@ document.getElementById('lockBtn').addEventListener('click', () => {
     return;
   }
   const attempt = window.prompt("Enter editor password:");
-  if(attempt === null) return;
-  if(attempt === EDITOR_PASSWORD){
-    editorPassword = attempt;
-    sessionStorage.setItem(SESSION_PW_KEY, attempt);
-    setUnlocked(true);
-  } else {
-    alert("Incorrect password.");
-  }
+  if(attempt === null || attempt === "") return;
+  editorPassword = attempt;
+  sessionStorage.setItem(SESSION_PW_KEY, attempt);
+  rebuildClient(attempt);
+  setUnlocked(true);
+  // Note: we can't verify the password client-side anymore (that's the point —
+  // it's no longer shipped in this file). If it's wrong, the pencil icons will
+  // show, but saving/adding/resetting will fail with a "not authorized" alert.
 });
 
 function temperColor(v){
@@ -144,7 +156,7 @@ function cardHTML(s){
   const tColor = temperColor(s.v);
   const trendClass = s.t.replace(/[^A-Za-z]/g, '') || "NA";
   const icon = TREND_ICON[s.t] || TREND_ICON["N/A"];
-  const desc = s.desc ? `<div class="card-desc">${s.desc}</div>` : "";
+  const desc = s.descr ? `<div class="card-desc">${s.descr}</div>` : "";
 
   return `
   <div class="card" style="--tcolor:${tColor}">
@@ -186,7 +198,6 @@ function renderGrid(){
   });
 }
 
-// ---- last updated (most recent date in dataset) ----
 function renderLastUpdated(){
   if(!ALL_SWORDS.length){
     document.getElementById('lastUpdated').textContent = '—';
@@ -201,7 +212,7 @@ const modalOverlay = document.getElementById('modalOverlay');
 const editForm = document.getElementById('editForm');
 let editingId = null;
 let isAddingSword = false;
-let pendingImage = undefined; // undefined = no change, null = removed, dataURL = new image
+let pendingImage = undefined;
 
 function updateImagePreview(src){
   const preview = document.getElementById('f-image-preview');
@@ -241,13 +252,12 @@ function openEditModal(id){
   document.getElementById('modalTitle').textContent = 'Edit Sword';
   document.getElementById('f-image').value = '';
   document.getElementById('f-name').value = sword.n;
-  document.getElementById('f-name').disabled = false;
   document.getElementById('f-cat').value = sword.c;
   document.getElementById('f-value').value = sword.v;
   document.getElementById('f-demand').value = sword.d;
   document.getElementById('f-trend').value = sword.t;
   document.getElementById('f-count').value = sword.ct ?? '';
-  document.getElementById('f-desc').value = sword.desc || '';
+  document.getElementById('f-desc').value = sword.descr || '';
   updateImagePreview(sword.img || null);
   modalOverlay.classList.add('show');
 }
@@ -259,7 +269,6 @@ function openAddModal(){
   document.getElementById('modalTitle').textContent = 'Add Sword';
   document.getElementById('f-image').value = '';
   document.getElementById('f-name').value = '';
-  document.getElementById('f-name').disabled = false;
   document.getElementById('f-cat').value = activeCategory !== 'All' ? activeCategory : 'Other Swords';
   document.getElementById('f-value').value = '';
   document.getElementById('f-demand').value = 'Medium';
@@ -280,8 +289,7 @@ function closeEditModal(){
 editForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if(!isAddingSword && editingId === null) return;
-  const valueInput = document.getElementById('f-value');
-  const editedValue = Math.min(Number(valueInput.value), MAX_EDIT_VALUE);
+  const editedValue = Math.min(Number(document.getElementById('f-value').value) || 0, MAX_EDIT_VALUE);
   const countVal = document.getElementById('f-count').value;
   const swordName = document.getElementById('f-name').value.trim();
 
@@ -302,21 +310,23 @@ editForm.addEventListener('submit', async (e) => {
     d: document.getElementById('f-demand').value,
     t: document.getElementById('f-trend').value,
     ct: countVal === '' ? null : Number(countVal),
-    desc: document.getElementById('f-desc').value,
+    descr: document.getElementById('f-desc').value,
+    u: new Date().toISOString().slice(0,10),
+    edited: true
   };
-  if(pendingImage !== undefined) payload.img = pendingImage;
+  if(pendingImage !== undefined) payload.img = pendingImage === null ? null : pendingImage;
 
   const saveBtn = editForm.querySelector('.btn-save');
   saveBtn.disabled = true;
   try{
-    const res = await fetch(isAddingSword ? API_URL : `${API_URL}/${editingId}`, {
-      method: isAddingSword ? 'POST' : 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(payload)
-    });
-    if(!res.ok){
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || "Could not save this sword.");
+    const query = isAddingSword
+      ? sb.from('swords').insert([payload])
+      : sb.from('swords').update(payload).eq('id', editingId);
+    const { error } = await query;
+    if(error){
+      alert(error.message.includes('row-level security')
+        ? "Wrong editor password — this change wasn't saved."
+        : (error.message || "Could not save this sword."));
       return;
     }
     await fetchSwords();
@@ -325,7 +335,7 @@ editForm.addEventListener('submit', async (e) => {
     renderLastUpdated();
   }catch(err){
     console.error(err);
-    alert("Could not reach the server. Please try again.");
+    alert("Could not reach the database. Please try again.");
   }finally{
     saveBtn.disabled = false;
   }
@@ -340,10 +350,10 @@ document.addEventListener('keydown', (e) => {
   if(e.key === 'Escape') closeEditModal();
 });
 
-// ---- export current data.js snapshot ----
+// ---- export current snapshot ----
 function buildDataFileText(){
   const lines = ALL_SWORDS.map(s => {
-    const desc = (s.desc || '').replace(/"/g, '\\"');
+    const desc = (s.descr || '').replace(/"/g, '\\"');
     const ct = s.ct === null || s.ct === undefined ? 'null' : s.ct;
     const img = s.img ? `,img:${JSON.stringify(s.img)}` : '';
     return `{n:${JSON.stringify(s.n)},c:${JSON.stringify(s.c)},v:${s.v},d:${JSON.stringify(s.d)},t:${JSON.stringify(s.t)},ct:${ct},u:${JSON.stringify(s.u)},desc:"${desc}"${img}},`;
@@ -365,10 +375,17 @@ document.getElementById('exportBtn').addEventListener('click', () => {
 document.getElementById('resetBtn').addEventListener('click', async () => {
   if(!confirm('This clears every saved edit for all visitors and restores the original values. Continue?')) return;
   try{
-    const res = await fetch(`${API_URL}/reset`, { method: 'POST', headers: authHeaders() });
-    if(!res.ok){
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || "Could not reset the data.");
+    const { error: delError } = await sb.from('swords').delete().gt('id', 0);
+    if(delError){
+      alert(delError.message.includes('row-level security')
+        ? "Wrong editor password — nothing was reset."
+        : (delError.message || "Could not reset the data."));
+      return;
+    }
+    const seeded = DEFAULT_SWORDS.map(s => ({ ...s, edited: false }));
+    const { error: insError } = await sb.from('swords').insert(seeded);
+    if(insError){
+      alert(insError.message || "Reset partially failed — the list may be empty. Try again.");
       return;
     }
     await fetchSwords();
@@ -376,11 +393,11 @@ document.getElementById('resetBtn').addEventListener('click', async () => {
     renderLastUpdated();
   }catch(err){
     console.error(err);
-    alert("Could not reach the server. Please try again.");
+    alert("Could not reach the database. Please try again.");
   }
 });
 
-// ---- events ----
+// ---- search/sort events ----
 document.getElementById('search').addEventListener('input', (e) => {
   searchTerm = e.target.value;
   renderGrid();
@@ -400,7 +417,8 @@ fetchSwords()
     setUnlocked(isUnlocked);
     renderLastUpdated();
   })
-  .catch(() => {
-    emptyEl.textContent = 'Could not load the value list. Please refresh.';
+  .catch((err) => {
+    console.error(err);
+    emptyEl.textContent = 'Could not load the value list. Check the Supabase setup in app.js.';
     emptyEl.classList.add('show');
   });
