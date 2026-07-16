@@ -66,6 +66,7 @@ const dom = {
   deleteBtn: document.getElementById("deleteBtn"),
   cancelBtn: document.getElementById("cancelBtn"),
   editSaveBtn: document.getElementById("editSaveBtn"),
+  editFormError: document.getElementById("editFormError"),
   detailCardId: document.getElementById("detailCardId"),
   detailTitle: document.getElementById("detailTitle"),
   detailThumbWrap: document.getElementById("detailThumbWrap"),
@@ -881,6 +882,7 @@ function openEditModal(swordId) {
   state.pendingMedia = { img: undefined, detailMedia: undefined, slashMedia: undefined, slashAudio: undefined };
   fillDetailPanel(sword);
   fillEditForm(sword);
+  clearEditFormError();
   dom.editPanel.hidden = false;
   updateDetailModalMode();
   dom.deleteBtn.hidden = !hasPermission("sword:delete");
@@ -910,6 +912,7 @@ function openAddModal() {
     slashAudio: null
   });
   clearEditForm();
+  clearEditFormError();
   dom.editPanel.hidden = false;
   updateDetailModalMode();
   dom.deleteBtn.hidden = true;
@@ -1111,28 +1114,37 @@ function setPreview(target, source, emptyText) {
 
 async function handleEditSubmit(event) {
   event.preventDefault();
-  const payload = {
-    n: dom.fields.name.value.trim(),
-    c: dom.fields.category.value,
-    v: Number(dom.fields.value.value),
-    d: dom.fields.demand.value,
-    t: dom.fields.trend.value,
-    ct: dom.fields.count.value === "" ? null : Number(dom.fields.count.value),
-    descr: dom.fields.description.value,
-    img: state.pendingMedia.img,
-    detailMedia: state.pendingMedia.detailMedia,
-    slashMedia: state.pendingMedia.slashMedia,
-    slashAudio: state.pendingMedia.slashAudio
-  };
+  clearEditFormError();
+  setEditFormBusy(true);
 
-  if (state.isAddingSword) {
-    const { sword } = await api("/swords", { method: "POST", body: JSON.stringify(payload) });
-    state.swords.unshift(sword);
-  } else {
-    await api(`/swords/${state.editingSwordId}`, { method: "PUT", body: JSON.stringify(payload) });
+  try {
+    const payload = {
+      n: dom.fields.name.value.trim(),
+      c: dom.fields.category.value,
+      v: Number(dom.fields.value.value),
+      d: dom.fields.demand.value,
+      t: dom.fields.trend.value,
+      ct: dom.fields.count.value === "" ? null : Number(dom.fields.count.value),
+      descr: dom.fields.description.value,
+      img: state.pendingMedia.img,
+      detailMedia: state.pendingMedia.detailMedia,
+      slashMedia: state.pendingMedia.slashMedia,
+      slashAudio: state.pendingMedia.slashAudio
+    };
+
+    if (state.isAddingSword) {
+      const { sword } = await api("/swords", { method: "POST", body: JSON.stringify(payload) });
+      state.swords.unshift(sword);
+    } else {
+      await api(`/swords/${state.editingSwordId}`, { method: "PUT", body: JSON.stringify(payload) });
+    }
+    await refreshSwords();
+    closeModal(dom.detailModalOverlay);
+  } catch (error) {
+    showEditFormError(error);
+  } finally {
+    setEditFormBusy(false);
   }
-  await refreshSwords();
-  closeModal(dom.detailModalOverlay);
 }
 
 async function handleDeleteSword() {
@@ -1142,9 +1154,33 @@ async function handleDeleteSword() {
   if (!window.confirm("Delete this sword?")) {
     return;
   }
-  await api(`/swords/${state.editingSwordId}`, { method: "DELETE" });
-  await refreshSwords();
-  closeModal(dom.detailModalOverlay);
+  clearEditFormError();
+  setEditFormBusy(true);
+
+  try {
+    await api(`/swords/${state.editingSwordId}`, { method: "DELETE" });
+    await refreshSwords();
+    closeModal(dom.detailModalOverlay);
+  } catch (error) {
+    showEditFormError(error);
+  } finally {
+    setEditFormBusy(false);
+  }
+}
+
+function setEditFormBusy(isBusy) {
+  dom.editSaveBtn.disabled = isBusy;
+  dom.deleteBtn.disabled = isBusy;
+}
+
+function clearEditFormError() {
+  dom.editFormError.textContent = "";
+  dom.editFormError.hidden = true;
+}
+
+function showEditFormError(error) {
+  dom.editFormError.textContent = error instanceof Error ? error.message : "The request failed. Try again.";
+  dom.editFormError.hidden = false;
 }
 
 async function exportData() {

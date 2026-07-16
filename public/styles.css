@@ -708,6 +708,12 @@ textarea:focus-visible{
   margin:0 0 12px;
   font-weight:700;
 }
+.form-error{
+  margin:12px 0 0;
+  color:#ff9a9a;
+  font-size:13px;
+  line-height:1.45;
+}
 .auth-copy{
   margin:0 0 16px;
   color:var(--text-dim);

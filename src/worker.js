@@ -44,7 +44,6 @@ const CARD_ID_PREFIX = "#";
 const CARD_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const CARD_ID_LENGTH = 6;
 const MEDIA_KEY_LIMIT = 512;
-const MEDIA_VARIANT_NAMES = ["low", "medium", "original"];
 const USER_ROLE_VALUES = ["Viewer", "Contributor", "Editor", "Maintainer", "Administrator", "Developer", "Owner"];
 const PUBLIC_TEAM_ROLES = new Set(["Contributor", "Editor", "Maintainer", "Administrator", "Developer", "Owner"]);
 const CATEGORIES = new Set(["LTM", "Ranked", "Top Spenders", "Other Swords", "Explosions"]);
@@ -109,7 +108,7 @@ export default {
       }
 
       if (url.pathname === "/api/auth/logout" && request.method === "POST") {
-        return withSecurityHeaders(await handleAuthLogout(request, env));
+        return withSecurityHeaders(await handleAuthLogout(request));
       }
 
       if (url.pathname === "/api/v1/health" && request.method === "GET") {
@@ -344,7 +343,7 @@ async function handleAuthCallback(request, env, url) {
   });
 }
 
-async function handleAuthLogout(request, env) {
+async function handleAuthLogout(request) {
   enforceTrustedOrigin(request);
   enforceAppRequest(request);
   return new Response(JSON.stringify({ authenticated: false }), {
@@ -438,12 +437,13 @@ async function handlePublicApiGetSword(request, env, url) {
 
 async function handlePublicApiTeam(request, env) {
   await consumeRateLimit(env, PUBLIC_API_BUCKET, getClientIdentifier(request), 120, 60);
+  const { placeholders, values } = getPublicTeamRoleFilter();
   const { results } = await env.DB.prepare(`
     SELECT id, discord_user_id, username, global_name, avatar_hash, role, status, created_at, updated_at, last_login_at
     FROM users
-    WHERE status = 'active' AND role IN (?, ?, ?, ?, ?, ?)
+    WHERE status = 'active' AND role IN (${placeholders})
     ORDER BY role_sort DESC, updated_at DESC, id ASC
-  `).bind(...PUBLIC_TEAM_ROLES).all();
+  `).bind(...values).all();
   return publicApiJson({ data: (results || []).map((row) => serializePublicTeamUser(row)) });
 }
 
@@ -631,10 +631,11 @@ async function handleExport(env, actor) {
 async function handleListTeam(request, env) {
   const actor = await getActorFromRequest(request, env);
   const includeAll = hasCapability(actor?.user?.role, "team:manage");
+  const { placeholders, values } = getPublicTeamRoleFilter();
   const sql = includeAll
     ? "SELECT id, discord_user_id, username, global_name, avatar_hash, role, status, created_at, updated_at, last_login_at FROM users ORDER BY role_sort DESC, updated_at DESC, id ASC"
-    : "SELECT id, discord_user_id, username, global_name, avatar_hash, role, status, created_at, updated_at, last_login_at FROM users WHERE status = 'active' AND role IN (?, ?, ?, ?, ?, ?) ORDER BY role_sort DESC, updated_at DESC, id ASC";
-  const bindings = includeAll ? [] : [...PUBLIC_TEAM_ROLES];
+    : `SELECT id, discord_user_id, username, global_name, avatar_hash, role, status, created_at, updated_at, last_login_at FROM users WHERE status = 'active' AND role IN (${placeholders}) ORDER BY role_sort DESC, updated_at DESC, id ASC`;
+  const bindings = includeAll ? [] : values;
   const { results } = await env.DB.prepare(sql).bind(...bindings).all();
   return json({
     team: (results || []).map((row) => includeAll ? serializeTeamUser(row) : serializePublicTeamUser(row)),
@@ -2075,9 +2076,19 @@ async function backfillCardIds(env) {
 
 async function backfillRoleSorts(env) {
   const { results } = await env.DB.prepare("SELECT id, role FROM users").all();
-  for (const row of results || []) {
-    await env.DB.prepare("UPDATE users SET role_sort = ? WHERE id = ?").bind(getRoleSort(row.role), row.id).run();
+  const statements = (results || []).map((row) => (
+    env.DB.prepare("UPDATE users SET role_sort = ? WHERE id = ?").bind(getRoleSort(row.role), row.id)
+  ));
+  if (statements.length) {
+    await env.DB.batch(statements);
   }
+}
+
+function getPublicTeamRoleFilter() {
+  return {
+    placeholders: Array.from({ length: PUBLIC_TEAM_ROLES.size }, () => "?").join(", "),
+    values: [...PUBLIC_TEAM_ROLES]
+  };
 }
 
 function getRoleSort(role) {
@@ -2344,8 +2355,6 @@ function injectDynamicHeadMarkup(html, request, env) {
     `<meta property="og:url" content="${pageUrl}">`,
     `<meta property="og:image" content="${imageUrl}">`,
     `<meta property="og:image:type" content="image/png">`,
-    `<meta property="og:image:width" content="96">`,
-    `<meta property="og:image:height" content="96">`,
     `<meta property="og:image:alt" content="BBTSL Blade Ball Value List preview image">`,
     `<meta name="twitter:image" content="${imageUrl}">`,
     `<meta name="twitter:image:alt" content="BBTSL Blade Ball Value List preview image">`
