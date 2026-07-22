@@ -46,7 +46,6 @@ const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
 const MAX_SFX_BYTES = 1 * 1024 * 1024;
 const MAX_VISUAL_PREVIEW_BYTES = 10 * 1024 * 1024;
-const D1_MEDIA_CHUNK_BYTES = 1 * 1024 * 1024;
 const R2_CLASS_A_LIMIT = 1_000_000;
 const R2_CLASS_B_LIMIT = 10_000_000;
 const R2_STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024;
@@ -2441,35 +2440,6 @@ function normalizeBlobBody(value) {
   }
 
   return value;
-}
-
-async function readMediaBody(value) {
-  if (typeof Blob !== "undefined" && value instanceof Blob) {
-    return new Uint8Array(await value.arrayBuffer());
-  }
-
-  const normalized = normalizeBlobBody(value);
-  if (normalized instanceof Uint8Array) {
-    return normalized;
-  }
-
-  if (normalized instanceof ArrayBuffer) {
-    return new Uint8Array(normalized);
-  }
-
-  return null;
-}
-
-function hexToBytes(value) {
-  if (typeof value !== "string" || value.length === 0 || value.length % 2 !== 0) {
-    return new Uint8Array();
-  }
-
-  const bytes = new Uint8Array(value.length / 2);
-  for (let index = 0; index < value.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(value.slice(index, index + 2), 16);
-  }
-  return bytes;
 }
 
 async function writeAuditLog(env, entry) {
